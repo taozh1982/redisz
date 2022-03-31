@@ -29,7 +29,7 @@ print(redisz.get_names())
 
 ### 全局函数
 
-| <div style="min-width:100px">操作</div> | <div style="min-width:500px">函数</div> |
+| <div style="min-width:100px">操作</div> | 函数 |
 | ------ | ------ |
 |查询| get_type / keys|
 |包含| exists|
@@ -43,7 +43,7 @@ print(redisz.get_names())
 
 #### 添加/设置
 
-| <div style="min-width:100px">类型</div> | <div style="min-width:500px">函数</div> |
+| 类型 | 函数 |
 | ------ | ------ |
 |string| str_set / str_mset|
 |list| list_push / list_insert|
@@ -53,7 +53,7 @@ print(redisz.get_names())
 
 #### 删除
 
-| <div style="min-width:100px">类型</div> | <div style="min-width:500px">函数</div> |
+| 类型 | 函数 |
 | ------ | ------ |
 |string| -|
 |list| list_pop / list_rem / list_trim / list_bpop|
@@ -63,7 +63,7 @@ print(redisz.get_names())
 
 #### 修改
 
-| <div style="min-width:100px">类型</div> | <div style="min-width:500px">函数</div> |
+| 类型 | 函数 |
 | ------ | ------ |
 |string| str_append / str_getset / str_setrange|
 |list| list_set|
@@ -73,7 +73,7 @@ print(redisz.get_names())
 
 #### 查询/获取
 
-| <div style="min-width:100px">类型</div> | <div style="min-width:500px">函数</div> |
+| 类型 | 函数 |
 | ------ | ------ |
 |string| str_get / str_mget / str_getrange|
 |list| list_get / list_range / list_getall|
@@ -83,7 +83,7 @@ print(redisz.get_names())
 
 #### 长度
 
-| <div style="min-width:100px">类型</div> | <div style="min-width:500px">函数</div> |
+| 类型 | 函数 |
 | ------ | ------ |
 |string| str_len|
 |list| list_len|
@@ -93,7 +93,7 @@ print(redisz.get_names())
 
 #### 自增/自减
 
-| <div style="min-width:100px">类型</div> | <div style="min-width:500px">函数</div> |
+| 类型 | 函数 |
 | ------ | ------ |
 |string| str_incr / str_decr / str_incrfloat / str_decrfloat|
 |list| -|
@@ -103,7 +103,7 @@ print(redisz.get_names())
 
 #### 索引
 
-| <div style="min-width:100px">类型</div> | <div style="min-width:500px">函数</div> |
+| 类型 | 函数 |
 | ------ | ------ |
 |string| -|
 |list| list_index|
@@ -113,7 +113,7 @@ print(redisz.get_names())
 
 #### 遍历&迭代
 
-| <div style="min-width:100px">类型</div> | <div style="min-width:500px">函数</div> |
+| 类型 | 函数 |
 | ------ | ------ |
 |string| -|
 |list| list_iter|
@@ -123,7 +123,7 @@ print(redisz.get_names())
 
 #### 包含
 
-| <div style="min-width:100px">类型</div> | <div style="min-width:500px">函数</div> |
+| 类型 | 函数 |
 | ------ | ------ |
 |string| -|
 |list| list_exists|
@@ -133,7 +133,7 @@ print(redisz.get_names())
 
 ### 消息订阅
 
-| <div style="min-width:100px">操作</div> | <div style="min-width:500px">函数</div> |
+| <div style="min-width:100px">操作</div> | 函数 |
 | ------ | ------ |
 |发布消息| publish|
 |订阅频道| subscribe|
