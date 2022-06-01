@@ -3,8 +3,10 @@ import threading
 import time
 import uuid
 from contextlib import contextmanager
+import warnings
 
 import redis
+from redis.lock import Lock
 
 from .utils import gen_lock_name, subscribe, get_list_args
 
@@ -1711,7 +1713,7 @@ class Redisz:
             默认情况, 返回结果按score【从小到大】排列, 设置desc=True以从大到小排列
             默认情况, start和end表示【索引】范围, 支持负数, 最后一个元素的索引是-1, 设置byscore=True, start和end表示分数范围,
             无论start和end表示索引还是分数, 都会被【包含】在结果内(>= & <=)
-            如果同时指定了desc=True和byscore=True，start的值要大于end的值，否则会返回空
+            如果同时指定了desc=True和byscore=True, start的值要大于end的值, 否则会返回空
 
         参数:
             name -redis的键名
@@ -1728,15 +1730,15 @@ class Redisz:
         示例:
             # test:zset={'a': 10, 'b': 20, 'c': 30}
             rdz.zset_range('test:zset', 0, -1)                      # 从小到大的所有元素, ['a', 'b', 'c']
-            rdz.zset_range('test:zset', 0, 1)                       # 从小到大，索引在0=<index<=1之间的所有元素, ['a', 'b']
+            rdz.zset_range('test:zset', 0, 1)                       # 从小到大, 索引在0=<index<=1之间的所有元素, ['a', 'b']
 
             rdz.zset_range('test:zset', 0, -1, desc=True)           # 从大到小的所有元素, ['c', 'b', 'a']
-            rdz.zset_range('test:zset', 0, 1, desc=True)            # 从大到小, 索引在0=<index<=1之间的所有元素，['c', 'b']
+            rdz.zset_range('test:zset', 0, 1, desc=True)            # 从大到小, 索引在0=<index<=1之间的所有元素, ['c', 'b']
 
             rdz.zset_range('test:zset', 0, -1, withscores=True)     # 返回元素和分数, [('a', 10.0), ('b', 20.0), ('c', 30.0)]
 
             rdz.zset_range('test:zset', 0, 20, withscores=True, byscore=True)   # start和end指定的是分数范围, [('a', 10.0), ('b', 20.0)]
-            rdz.zset_range('test:zset', 20, 0, desc=True, withscores=True, byscore=True)   # 从大到小，分数在20>=score>=0之间的元素, [('b', 20.0), ('a', 10)]
+            rdz.zset_range('test:zset', 20, 0, desc=True, withscores=True, byscore=True)   # 从大到小, 分数在20>=score>=0之间的元素, [('b', 20.0), ('a', 10)]
             rdz.zset_range('test:zset', 0, 20, desc=True, withscores=True, byscore=True)   # 返回[], 没有0>=score>=20的分数
 
             rdz.zset_range('test:zset', 0, -1, withscores=True, score_cast_func=int) # [('a', 10), ('b', 20), ('c', 30)]
@@ -1748,7 +1750,7 @@ class Redisz:
     def zset_revrange(self, name, start, end, withscores=False, score_cast_func=float):
         """
         描述:
-            按索引范围，以分数【从大到小】的顺序从指定有序集合中获取元素
+            按索引范围, 以分数【从大到小】的顺序从指定有序集合中获取元素
             start和end表示的是【索引】范围, 而不是分数范围
             是zset_range方法的一个简化版本, == zset_range(name, start, end, withscores=False, score_cast_func=float, desc=True, byscore=True)
 
@@ -1776,7 +1778,7 @@ class Redisz:
     def zset_rangebyscore(self, name, min_score, max_score, start=None, num=None, withscores=False, score_cast_func=float):
         """
         描述:
-            按分数范围，以分数【从小到大】的顺序从指定有序集合中获取元素
+            按分数范围, 以分数【从小到大】的顺序从指定有序集合中获取元素
             min_score和max_score表示的是【分数】, 而不是索引
             start和num用来指定获取元素的开始和个数, 两者必须同时指定, 否则会引发异常
             在zset_range(name, start, end, desc=False, withscores=False, score_cast_func=float, byscore=True)的基础上增加了start/number两个参数
@@ -1809,7 +1811,7 @@ class Redisz:
     def zset_revrangebyscore(self, name, max_score, min_score, start=None, num=None, withscores=False, score_cast_func=float):
         """
         描述:
-            按分数范围，以分数【从大到小】的顺序从指定有序集合中获取元素
+            按分数范围, 以分数【从大到小】的顺序从指定有序集合中获取元素
             min和max表示的是【分数】, 而不是索引
             start和num用来指定获取元素的开始和个数, 两者必须同时指定, 否则会引发异常
             在zset_range(name, start, end, desc=True, withscores=False, score_cast_func=float, byscore=True)的基础上增加了start/number两个参数
@@ -1966,95 +1968,6 @@ class Redisz:
                     print(i) # ('k368', 368.0)
             """
         return self.get_redis().zscan_iter(name, match=match, count=count, score_cast_func=score_cast_func)
-
-    # ------------------------------------------ lock ------------------------------------------
-    def acquire_lock(self, lock_name, lock_seconds=10, acquire_seconds=10):
-        """
-        描述:
-            获取锁
-            Redis的事务是通过MULTI和EXEC命令实现的, 以确保一个客户端在不被其他客户端打断的情况下执行操作命令, 当一个事务执行完毕时, 才会处理其他客户端的命令
-            Python客户端以流水线(pipeline)的方式实现的事务, 一次将所有命令都发送给Redis, 同时还要配合WATCH命令, 以确保执行EXEC之前, 操作的键值没有被修改
-            这是一种"乐观锁", 不会阻止其他客户端对数据的修改, 而是WATCH到数据变化后, 会取消EXEC操作, 并以重试的方式再次检查操作条件是否满足, 再决定后续的操作
-            请注意, WATCH必须和EXEC配合使用才有意义, 单纯的WATCH是不起作用的
-            这种WATCH方式, 在有多个客户端操作相同数据时, 可能会造成大量的重试, 而且编码也比较麻烦
-            所以提供了acquire_lock/release_lock方法实现分布式锁
-            1.获取锁
-                -如果成功返回锁的标识符, 并且设置过期时间, 以避免客户端异常退出锁一直被占用问题
-                -如果锁已经存在, 则等待acquire_timeout, 如果在等待的时间内没有获取到, 则返回False
-                -如果锁已经存在, 但是没有设置过期时间, 则设置过期时间为lock_timeout, 以避免锁一直不可用的问题
-            2.释放锁
-                -通过标识符判断当前的锁是否已经发生变化, 如果没有变化, 则将锁删除, 如果有变化则返回False
-
-        参数:
-            lock_name:string -锁的名称, 可以有多个锁
-            lock_seconds:int -锁的过期时间, 超时自动移除锁
-            acquire_seconds:int -请求等待时间, 默认10秒, 如果acquire_seconds内没有获取到锁, 返回False
-
-        返回:
-            identifier:string|bool -如果获取成功, 返回锁对应的标识符, 如果获取失败, 返回False
-
-        示例:
-            def lock_test():
-                locked = rdz.acquire_lock('a-lock')
-                if locked is False:
-                    return False
-
-                redis_conn = rdz.get_redis()
-                pipe = redis_conn.pipeline(True)
-                try:
-                    pipe.set('a', 1)
-                    pipe.set('b', 2)
-                    pipe.execute()
-                finally:
-                    redis_conn.release_lock('a-lock', locked)
-
-        """
-        r = self.get_redis()
-        identifier = str(uuid.uuid4())  # 释放锁时检查
-        lock_name = gen_lock_name(lock_name)
-        lock_seconds = int(math.ceil(lock_seconds))  # 整数
-        end = time.time() + acquire_seconds
-
-        while time.time() < end:
-            if r.setnx(lock_name, identifier):  # 如果lockname不存在, 设置lockname&过期时间, 并返回identifier
-                r.expire(lock_name, lock_seconds)
-                return identifier
-            elif r.ttl(lock_name) == -1:  # 如果lockname没有设置到期时间, 则设置超时时间, 避免一直lock
-                r.expire(lock_name, lock_seconds)
-            time.sleep(0.01)
-        return False
-
-    def release_lock(self, lockname, identifier):
-        """
-        描述:
-            释放锁
-
-        参数:
-            lockname:string -要释放锁的名称
-            identifier:string -要释放锁的标识符
-
-        返回:
-            result:bool -如果释放成功返回True, 否则返回False
-
-        示例:
-            # 请参考 acquire_lock
-        """
-        pipe = self.get_redis().pipeline(True)
-        lockname = gen_lock_name(lockname)
-        while True:
-            try:
-                pipe.watch(lockname)  # 通过watch确保lockname没有被改变过
-                if pipe.get(lockname) == identifier:  # 判断锁标识符是否发生变化
-                    pipe.multi()
-                    pipe.delete(lockname)
-                    pipe.execute()  # execute中会调用unwatch
-                    return True  # 释放成功
-                pipe.unwatch()
-                break
-            except redis.exceptions.WatchError:
-                pass
-
-        return False  # 失去了锁
 
     # ------------------------------------------ ext ------------------------------------------
     def get_names(self, pattern='*', **kwargs):
@@ -2329,6 +2242,140 @@ class Redisz:
 
         return self.zset_rank(name, member) is not None
 
+    # ------------------------------------------ lock ------------------------------------------
+    def lock(self, name, *, timeout=10, blocking=False, blocking_timeout=2, sleep=0.1, thread_local=True):
+        """
+        描述:
+            Redis的事务是通过MULTI和EXEC命令实现的, 以确保一个客户端在不被其他客户端打断的情况下执行操作命令, 当一个事务执行完毕时, 才会处理其他客户端的命令
+            Python客户端以流水线(pipeline)的方式实现的事务, 一次将所有命令都发送给Redis, 同时还要配合WATCH命令, 以确保执行EXEC之前, 操作的键值没有被修改
+            这是一种"乐观锁", 不会阻止其他客户端对数据的修改, 而是WATCH到数据变化后, 会取消EXEC操作, 并以重试的方式再次检查操作条件是否满足, 再决定后续的操作
+            请注意, WATCH必须和EXEC配合使用才有意义, 单纯的WATCH是不起作用的
+            这种WATCH方式, 在有多个客户端操作相同数据时, 可能会造成大量的【重试】, 而且编码也比较麻烦
+            锁提供了另外一种方式以解决分布式操作问题
+            1.获取锁
+                -如果成功返回True, 并且设置过期时间, 以避免客户端异常退出锁一直被占用问题
+                -如果锁已经存在, 则等待blocking_timeout, 如果在等待的时间内没有获取到, 则返回False
+            2.释放锁
+                -如果锁的拥有者发生了变化则会抛出LockError异常
+        参数:
+            name:string         - 锁的名字
+            timeout:int/float   - 锁的存在时间, 单位为秒, 如果超过了存在时间, 即便没有release, 锁也会被释放, 解决因客户端异常退出锁一直被占用问题
+            sleep:float         - 每次while循环的sleep时间, 单位为秒, 默认是0.1, 一般不需要设置
+            blocking:           - 指定当锁已被占用时, 是否等待, 如果不等待直接返回false, 如果等待, 则等待blocking_timeout
+            blocking_timeout:   - 当锁被占用时, 等待的时间, 单位为秒, 如果在等待时间内没有获取到锁, 则返回false
+            thread_local:       - 是否将生成的token存在在当前线程的local存储中, 一般不需要设置
+
+        返回:
+            lock -redis.lock.Lock对象
+                   -也可以将lock对象作为一个上下文管理器, 配合with使用(推荐方式)
+                   -可以通过lock.acquire/lock.release方法获取锁, 释放锁
+
+        示例:
+            # 配合with使用
+            with r.lock('my_lock'):
+                r.set('foo', 'bar')
+
+            # 通过acquire/release方法获取锁/释放锁
+            lock = rdz.lock('my_lock')
+            lock.acquire(blocking=True)
+            rdz.set('foo', 'bar')
+            lock.release()
+        """
+
+        return Lock(self.get_redis(), name=name, timeout=timeout, sleep=sleep, blocking=blocking, blocking_timeout=blocking_timeout, thread_local=thread_local)
+
+    def acquire_lock(self, lock_name, lock_seconds=10, acquire_seconds=10):
+        """
+        描述:
+            获取锁
+            Redis的事务是通过MULTI和EXEC命令实现的, 以确保一个客户端在不被其他客户端打断的情况下执行操作命令, 当一个事务执行完毕时, 才会处理其他客户端的命令
+            Python客户端以流水线(pipeline)的方式实现的事务, 一次将所有命令都发送给Redis, 同时还要配合WATCH命令, 以确保执行EXEC之前, 操作的键值没有被修改
+            这是一种"乐观锁", 不会阻止其他客户端对数据的修改, 而是WATCH到数据变化后, 会取消EXEC操作, 并以重试的方式再次检查操作条件是否满足, 再决定后续的操作
+            请注意, WATCH必须和EXEC配合使用才有意义, 单纯的WATCH是不起作用的
+            这种WATCH方式, 在有多个客户端操作相同数据时, 可能会造成大量的重试, 而且编码也比较麻烦
+            所以提供了acquire_lock/release_lock方法实现分布式锁
+            1.获取锁
+                -如果成功返回锁的标识符, 并且设置过期时间, 以避免客户端异常退出锁一直被占用问题
+                -如果锁已经存在, 则等待acquire_timeout, 如果在等待的时间内没有获取到, 则返回False
+                -如果锁已经存在, 但是没有设置过期时间, 则设置过期时间为lock_timeout, 以避免锁一直不可用的问题
+            2.释放锁
+                -通过标识符判断当前的锁是否已经发生变化, 如果没有变化, 则将锁删除, 如果有变化则返回False
+
+        参数:
+            lock_name:string -锁的名称, 可以有多个锁
+            lock_seconds:int -锁的过期时间, 超时自动移除锁
+            acquire_seconds:int -请求等待时间, 默认10秒, 如果acquire_seconds内没有获取到锁, 返回False
+
+        返回:
+            identifier:string|bool -如果获取成功, 返回锁对应的标识符, 如果获取失败, 返回False
+
+        示例:
+            def lock_test():
+                locked = rdz.acquire_lock('a-lock')
+                if locked is False:
+                    return False
+
+                redis_conn = rdz.get_redis()
+                pipe = redis_conn.pipeline(True)
+                try:
+                    pipe.set('a', 1)
+                    pipe.set('b', 2)
+                    pipe.execute()
+                finally:
+                    redis_conn.release_lock('a-lock', locked)
+
+        """
+        warnings.warn('This method is deprecated. pls use lock method', DeprecationWarning, stacklevel=2)
+
+        r = self.get_redis()
+        identifier = str(uuid.uuid4())  # 释放锁时检查
+        lock_name = gen_lock_name(lock_name)
+        lock_seconds = int(math.ceil(lock_seconds))  # 整数
+        end = time.time() + acquire_seconds
+
+        while time.time() < end:
+            if r.setnx(lock_name, identifier):  # 如果lockname不存在, 设置lockname&过期时间, 并返回identifier
+                r.expire(lock_name, lock_seconds)
+                return identifier
+            elif r.ttl(lock_name) == -1:  # 如果lockname没有设置到期时间, 则设置超时时间, 避免一直lock
+                r.expire(lock_name, lock_seconds)
+            time.sleep(0.01)
+        return False
+
+    def release_lock(self, lockname, identifier):
+        """
+        描述:
+            释放锁
+
+        参数:
+            lockname:string -要释放锁的名称
+            identifier:string -要释放锁的标识符
+
+        返回:
+            result:bool -如果释放成功返回True, 否则返回False
+
+        示例:
+            # 请参考 acquire_lock
+        """
+        warnings.warn('This method is deprecated. pls use lock method', DeprecationWarning, stacklevel=2)
+
+        pipe = self.get_redis().pipeline(True)
+        lockname = gen_lock_name(lockname)
+        while True:
+            try:
+                pipe.watch(lockname)  # 通过watch确保lockname没有被改变过
+                if pipe.get(lockname) == identifier:  # 判断锁标识符是否发生变化
+                    pipe.multi()
+                    pipe.delete(lockname)
+                    pipe.execute()  # execute中会调用unwatch
+                    return True  # 释放成功
+                pipe.unwatch()
+                break
+            except redis.exceptions.WatchError:
+                pass
+
+        return False  # 失去了锁
+
     # ------------------------------------------ pubsub ------------------------------------------
     def get_pubsub(self):
         """
@@ -2363,7 +2410,7 @@ class Redisz:
         else:
             return self.get_redis().publish(channel, message, **kwargs)
 
-    def subscribe(self, channels, callback, thread=False):
+    def subscribe(self, channels, callback, thread=False, thread_kwargs=None):
         """
         描述:
             订阅一个或多个频道, 当有消息发布到指定频道时, callback函数将会被回掉以处理消息
@@ -2388,9 +2435,10 @@ class Redisz:
             print('thread != True 则不会运行到此行代码')
         """
         if thread is True:
-            threading.Thread(target=subscribe, args=(self, channels, callback)).start()
+            thread_kwargs = thread_kwargs or {}
+            threading.Thread(target=subscribe, args=(self, channels, callback), **thread_kwargs).start()
         else:
             subscribe(self, channels, callback)
 
 
-__version__ = '0.3.0'
+__version__ = '0.3.1'

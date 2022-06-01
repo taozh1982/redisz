@@ -40,4 +40,4 @@ def get_allcase():
 if __name__ == '__main__':
     # 运行测试用例
     runner = unittest.TextTestRunner()
-    runner.run(get_allcase())
+    print(runner.run(get_allcase()))

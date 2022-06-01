@@ -1,6 +1,6 @@
 ## 关于
 
-redisz是基于redis-py封装的redis操作函数集合, 在原有函数的基础上, 进行了封装和扩展, 并且完善了代码注释和测试用例。
+`redisz`是基于`redis-py`封装的redis操作函数集合, 在原有函数的基础上, 进行了封装和扩展, 并且完善了代码注释和测试用例。
 
 ## 代码示例
 
@@ -144,19 +144,22 @@ print(rdz.get_names())
 
 | 操作 | 函数 |
 | ------ | ------ |
-|获取锁| acquire_lock|
-|释放锁| release_lock|
+|生成锁| lock|
 
 ## 版本
 
+- **0.3.1** `2022/06/01`
+    - [A] 添加`lock`方法以实现分布式锁相关操作(acquire/release)
+    - [D] 废弃~~acquire_lock/release_lock~~方法，改由lock方法实现锁相关操作
+
 - **0.3.0** `2022/05/12`
-    - [重构]由函数模式改为了类&对象模式, 不同的类对象, 可以操作不同的redis
+    - [C] 由函数模式改为了类&对象模式, 不同的类对象, 可以操作不同的redis
 
 - **0.2.1** `2022/04/28`
-    - [修改]初始化方法init_redis, 参数由host/port改为了url
+    - [C] 将初始化方法`init_redis`的参数改为了url模式
 
 - **0.2** `2022/04/27`
-    - [添加]acquire_lock/release_lock分布式锁函数
+    - [A] 添加`acquire_lock/release_lock`分布式锁函数
 
 - **0.1** `2022/04/01`
     - redisz正式发布
