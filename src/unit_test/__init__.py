@@ -18,11 +18,18 @@ class RedisTestCase(unittest.TestCase):
         print(name.center(60, '-'))
 
     def setUp(self):
-        self.rdz = redisz.Redisz('localhost')
-        self.rdz.delete(self.rdz.get_names("test:*"))
+        # self.rdz = redisz.Redisz('localhost')
+        # self.rdz = redisz.Redisz('10.124.5.222:6388')
+        self.rdz = redisz.Redisz(cluster=True, startup_nodes=[{'host': '10.124.5.222', 'port': 6379},
+                                                              {'host': '10.124.5.190', 'port': 6379},
+                                                              {'host': '10.124.5.191', 'port': 6379}])
+        self.rdz.delete(self.rdz.get_names("*"))
+        self.rdz.delete(self.rdz.get_names("redisz-lock:*"))
+        # self.rdz.delete(['test:numbers2','test:count'])
 
     def tearDown(self) -> None:
-        self.rdz.delete(self.rdz.get_names("test:*"))
+        self.rdz.delete(self.rdz.get_names("*"))
+        self.rdz.delete(self.rdz.get_names("redisz-lock:*"))
 
     @classmethod
     def tearDownClass(cls) -> None:

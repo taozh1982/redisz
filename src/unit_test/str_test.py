@@ -1,3 +1,4 @@
+import redis
 from redis import ResponseError
 
 from src.unit_test import RedisTestCase
@@ -25,9 +26,9 @@ class TestStr(RedisTestCase):
 
     def test_msetget(self):
         rdz = self.rdz
-        self.assertTrue(rdz.str_mset({'test:name': 'Zhang Tao', 'test:age': '18', 'test:email': 'taozh@cisco.com'}))
-        self.assertListEqual(rdz.str_mget('test:name'), ['Zhang Tao'])
-        self.assertListEqual(rdz.str_mget('test:name', 'test:age'), ['Zhang Tao', '18'])
+        self.assertTrue(rdz.str_mset({'test:{aa}name': 'Zhang Tao', 'test:{aa}age': '18', 'test:{aa}email': 'taozh@cisco.com'}))
+        self.assertListEqual(rdz.str_mget('test:{aa}name'), ['Zhang Tao'])
+        self.assertListEqual(rdz.str_mget('test:{aa}name', 'test:{aa}age'), ['Zhang Tao', '18'])
 
     def test_append(self):
         rdz = self.rdz
@@ -63,10 +64,12 @@ class TestStr(RedisTestCase):
         self.assertEqual(rdz.str_incr('test:age', 2), 21)
         self.assertEqual(rdz.str_incr('test:age', -1), 20)
         self.assertEqual(rdz.str_incr('test:not-exist'), 1)
+
         with self.assertRaises(ResponseError):
             rdz.str_incr('test:email')
         with self.assertRaises(ResponseError):
             rdz.str_incr('test:float')
+
 
     def test_decr(self):
         rdz = self.rdz

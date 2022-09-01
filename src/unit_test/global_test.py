@@ -64,12 +64,12 @@ class TestStr(RedisTestCase):
     def test_rname(self):
         rdz = self.rdz
         for i in range(6):
-            rdz.set_value('test:i' + str(i), i)
+            rdz.set_value('test:{i}' + str(i), i)
 
-        self.assertTrue(rdz.rename('test:i0', 'test:i1'))
-        self.assertEqual(rdz.str_get('test:i1'), "0")
-        self.assertFalse(rdz.rename('test:i2', 'test:i3', nx=True))
-        self.assertEqual(rdz.str_get('test:i3'), "3")
+        self.assertTrue(rdz.rename('test:{i}0', 'test:{i}1'))
+        self.assertEqual(rdz.str_get('test:{i}1'), "0")
+        self.assertFalse(rdz.rename('test:{i}2', 'test:{i}3', nx=True))
+        self.assertEqual(rdz.str_get('test:{i}3'), "3")
 
     def test_expire(self):
         rdz = self.rdz
@@ -90,6 +90,7 @@ class TestStr(RedisTestCase):
 
         current_time = int(time.time())
         self.assertTrue(rdz.expireat('test:i3', current_time + 2))
+
         self.assertFalse(rdz.expireat('test:not-exist', current_time + 2))
         self.assertLessEqual(rdz.ttl('test:i3'), 2)
         self.assertGreaterEqual(rdz.ttl('test:i3'), 1)
@@ -103,6 +104,9 @@ class TestStr(RedisTestCase):
 
     def test_sort(self):
         rdz = self.rdz
+        if rdz.cluster is True:
+            print('\n', __name__ + ":test_sort doesn't work with clusters")
+            return
         rdz.set_value('test:sort', [6, 88, 112, 18, 36])
         rdz.set_value('test:sort-weight', {'d-6': 1, 'd-88': 2, 'd-112': 3, 'd-18': 4, 'd-36': 5, })
         self.assertListEqual(rdz.sort('test:sort'), ['6', '18', '36', '88', '112'])

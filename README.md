@@ -9,6 +9,7 @@ from redisz import Redisz
 
 
 rdz = Redisz('redis://127.0.0.1:6379')
+# rdz = redisz.Redisz(cluster=True, startup_nodes=[{'host': 'node1', 'port': 6379}, {'host': 'node2', 'port': 6379}, {'host': 'node3', 'port': 6379}])
 
 rdz.set_value('test:str', 'a')
 rdz.set_value('test:str-number', 1.0)
@@ -144,13 +145,20 @@ print(rdz.get_names())
 
 | 操作 | 函数 |
 | ------ | ------ |
-|生成锁| lock|
+|锁| lock|
+
+## 注意事项
+
+- 如果redis是 [Cluster](https://redis.io/docs/manual/scaling/) 部署模式，必须使用`hash tag`才能进行多键值操作(str_mset/str_mget/list_bpop/...)
 
 ## 版本
 
+- **0.5** `2022/09/01`
+    - [A] 添加对redis集群的支持
+
 - **0.3.1** `2022/06/01`
     - [A] 添加`lock`方法以实现分布式锁相关操作(acquire/release)
-    - [D] 废弃~~acquire_lock/release_lock~~方法，改由lock方法实现锁相关操作
+    - [D] 废弃~~acquire_lock/release_lock~~方法，改由`lock`方法实现锁相关操作
 
 - **0.3.0** `2022/05/12`
     - [C] 由函数模式改为了类&对象模式, 不同的类对象, 可以操作不同的redis

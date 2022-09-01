@@ -1,3 +1,6 @@
+from redis.cluster import ClusterNode
+
+
 def get_list_args(keys, args):
     try:
         iter(keys)
@@ -25,3 +28,26 @@ def subscribe(rdz, channels, callback):
     for msg in pubsub.listen():
         if callback(msg) is False:
             pubsub.unsubscribe(channels)
+
+
+def bytes_to_str(value):
+    if type(value) is bytes:
+        return value.decode('utf-8')
+    return value
+
+
+def create_cluster_nodes(startup_nodes):
+    nodes = []
+    for item in startup_nodes:
+        item_type = type(item)
+        if item_type is ClusterNode:
+            nodes.append(item)
+        else:
+            node = {'host': None, 'port': 6379}
+            if item_type is str:
+                node['host'] = item
+            elif item_type is dict:
+                node.update(item)
+            if node.get('host') is not None:
+                nodes.append(ClusterNode(node.get('host'), node.get('port')))
+    return nodes

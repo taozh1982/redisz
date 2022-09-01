@@ -23,6 +23,7 @@ class TestList(RedisTestCase):
     def test_insert(self):
         rdz = self.rdz
         rdz.list_push('test:numbers', [1, 3, 5])
+
         self.assertEqual(rdz.list_insert('test:numbers', 1, 2), 4)
         self.assertListEqual(rdz.list_getall('test:numbers'), ['1', '2', '3', '5'])
         self.assertEqual(rdz.list_insert('test:numbers', 5, 4, before=True), 5)
@@ -48,7 +49,8 @@ class TestList(RedisTestCase):
     def test_pop(self):
         rdz = self.rdz
         rdz.list_push('test:numbers', ['1', '2', '3', '4', '5', '6'])
-        self.assertIsNone(rdz.list_pop('test:numbers', 0))
+
+        self.assertListEqual(rdz.list_pop('test:numbers', 0), [])
 
         self.assertEqual(rdz.list_pop('test:numbers'), '6')
         self.assertListEqual(rdz.list_getall('test:numbers'), ['1', '2', '3', '4', '5'])
@@ -59,7 +61,7 @@ class TestList(RedisTestCase):
         self.assertListEqual(rdz.list_pop('test:numbers', 3), ['3', '2'])
         self.assertListEqual(rdz.list_getall('test:numbers'), [])
 
-        self.assertIsNone(rdz.list_pop('test:not-exist'))
+        self.assertListEqual(rdz.list_pop('test:not-exist'),[])
 
     def test_rem(self):
         rdz = self.rdz
@@ -104,27 +106,27 @@ class TestList(RedisTestCase):
 
     def test_bpop(self):
         rdz = self.rdz
-        rdz.list_push('test:numbers1', ['1', '2'])
-        rdz.list_push('test:numbers2', ['3', '4'])
-        self.assertTupleEqual(rdz.list_bpop(['test:numbers1', 'test:numbers2']), ('test:numbers1', '2'))
-        self.assertTupleEqual(rdz.list_bpop(['test:numbers1', 'test:numbers2']), ('test:numbers1', '1'))
-        self.assertTupleEqual(rdz.list_bpop(['test:numbers1', 'test:numbers2']), ('test:numbers2', '4'))
-        self.assertTupleEqual(rdz.list_bpop(['test:numbers1', 'test:numbers2']), ('test:numbers2', '3'))
+        rdz.list_push('test:{numbers}1', ['1', '2'])
+        rdz.list_push('test:{numbers}2', ['3', '4'])
+        self.assertTupleEqual(rdz.list_bpop(['test:{numbers}1', 'test:{numbers}2']), ('test:{numbers}1', '2'))
+        self.assertTupleEqual(rdz.list_bpop(['test:{numbers}1', 'test:{numbers}2']), ('test:{numbers}1', '1'))
+        self.assertTupleEqual(rdz.list_bpop(['test:{numbers}1', 'test:{numbers}2']), ('test:{numbers}2', '4'))
+        self.assertTupleEqual(rdz.list_bpop(['test:{numbers}1', 'test:{numbers}2']), ('test:{numbers}2', '3'))
 
-        rdz.list_push('test:numbers1', ['1', '2'])
-        rdz.list_push('test:numbers2', ['3', '4'])
-        self.assertTupleEqual(rdz.list_bpop(['test:numbers1', 'test:numbers2'], left=True), ('test:numbers1', '1'))
-        self.assertTupleEqual(rdz.list_bpop(['test:numbers1', 'test:numbers2'], left=True), ('test:numbers1', '2'))
-        self.assertTupleEqual(rdz.list_bpop(['test:numbers1', 'test:numbers2'], left=True), ('test:numbers2', '3'))
-        self.assertTupleEqual(rdz.list_bpop(['test:numbers1', 'test:numbers2'], left=True), ('test:numbers2', '4'))
+        rdz.list_push('test:{numbers}1', ['1', '2'])
+        rdz.list_push('test:{numbers}2', ['3', '4'])
+        self.assertTupleEqual(rdz.list_bpop(['test:{numbers}1', 'test:{numbers}2'], left=True), ('test:{numbers}1', '1'))
+        self.assertTupleEqual(rdz.list_bpop(['test:{numbers}1', 'test:{numbers}2'], left=True), ('test:{numbers}1', '2'))
+        self.assertTupleEqual(rdz.list_bpop(['test:{numbers}1', 'test:{numbers}2'], left=True), ('test:{numbers}2', '3'))
+        self.assertTupleEqual(rdz.list_bpop(['test:{numbers}1', 'test:{numbers}2'], left=True), ('test:{numbers}2', '4'))
 
     def test_rpoplpush(self):
         rdz = self.rdz
-        rdz.list_push('test:numbers1', ['1', '2'])
-        rdz.list_push('test:numbers2', ['3', '4'])
-        self.assertEqual(rdz.list_rpoplpush('test:numbers1', 'test:numbers2'), '2')
-        self.assertListEqual(rdz.list_getall('test:numbers1'), ['1'])
-        self.assertListEqual(rdz.list_getall('test:numbers2'), ['2', '3', '4'])
-        self.assertEqual(rdz.list_rpoplpush('test:numbers1', 'test:numbers2'), '1')
-        self.assertListEqual(rdz.list_getall('test:numbers1'), [])
-        self.assertListEqual(rdz.list_getall('test:numbers2'), ['1', '2', '3', '4'])
+        rdz.list_push('test:{numbers}1', ['1', '2'])
+        rdz.list_push('test:{numbers}2', ['3', '4'])
+        self.assertEqual(rdz.list_rpoplpush('test:{numbers}1', 'test:{numbers}2'), '2')
+        self.assertListEqual(rdz.list_getall('test:{numbers}1'), ['1'])
+        self.assertListEqual(rdz.list_getall('test:{numbers}2'), ['2', '3', '4'])
+        self.assertEqual(rdz.list_rpoplpush('test:{numbers}1', 'test:{numbers}2'), '1')
+        self.assertListEqual(rdz.list_getall('test:{numbers}1'), [])
+        self.assertListEqual(rdz.list_getall('test:{numbers}2'), ['1', '2', '3', '4'])

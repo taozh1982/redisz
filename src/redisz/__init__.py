@@ -2,21 +2,22 @@ import math
 import threading
 import time
 import uuid
-from contextlib import contextmanager
 import warnings
+from contextlib import contextmanager
 
 import redis
 from redis.lock import Lock
 
-from .utils import gen_lock_name, subscribe, get_list_args
+from .utils import gen_lock_name, subscribe, get_list_args, bytes_to_str, create_cluster_nodes
 
 
 class Redisz:
     # ------------------------------------------ sys ------------------------------------------
-    def __init__(self, url, **kwargs):
+    def __init__(self, url=None, **kwargs):
         """
         描述:
             初始化redis, url可以指定redis的账号,密码,地址,端口,数据库等信息, 也可以通过关键字参数指定其他连接属性.
+            如果设置cluster=True，则初始化Cluster Redis对象，通过startup_nodes参数指定集群节点列表.
 
         参数:
             url:str -redis地址url,格式如下
@@ -28,13 +29,32 @@ class Redisz:
             rdz = redisz.Redisz('redis://127.0.0.1', decode_responses=True)
             rdz = redisz.Redisz('redis://127.0.0.1:6379')
             rdz = redisz.Redisz('redis://127.0.0.1:6379/0')
+            rdz = redisz.Redisz(cluster=True, startup_nodes=[{'host': '10.124.5.222', 'port': 6379},
+                                                              {'host': '10.124.5.190', 'port': 6379},
+                                                              {'host': '10.124.5.191', 'port': 6379}])
         """
-        if not url.lower().startswith(("redis://", "rediss://", "unix://")):
-            url = 'redis://' + url
+        cluster = self.cluster = kwargs.get('cluster') is True
         if 'decode_responses' not in kwargs:
             kwargs['decode_responses'] = True
+        if cluster and 'startup_nodes' in kwargs:
+            kwargs['startup_nodes'] = create_cluster_nodes(kwargs.get('startup_nodes'))
 
-        self.redis_ins = redis.Redis(connection_pool=redis.ConnectionPool.from_url(url, **kwargs))
+        if url and not url.lower().startswith(('redis://', 'rediss://', 'unix://')):
+            url = 'redis://' + url
+
+        if cluster:
+            self.redis_ins = redis.RedisCluster(url=url, **kwargs)
+        else:
+            self.redis_ins = redis.Redis(connection_pool=redis.ConnectionPool.from_url(url, **kwargs))
+
+        # startup_nodes = [{'name': 'node1', 'host': '10.124.5.222', 'port': 6379},
+        #                  {'name': 'node2', 'host': '10.124.5.190', 'port': 6379},
+        #                  {'name': 'node3', 'host': '10.124.5.191', 'port': 6379}]
+        # self.redis_ins = redis.RedisCluster(startup_nodes=startup_nodes, decode_responses=True)
+        # self.redis_ins = redis.RedisCluster(startup_nodes=[
+        #     ClusterNode('10.124.5.222', 6379),
+        #     ClusterNode('10.124.5.191', 6379),
+        #     ClusterNode('10.124.5.190', 6379)])
 
     def get_redis(self):
         """
@@ -155,7 +175,7 @@ class Redisz:
             result = False
         return result
 
-    def keys(self, pattern="*", **kwargs):
+    def keys(self, pattern='*', **kwargs):
         """
         描述:
             获取redis中所有的键名称列表, 可以根据pattern进行过滤
@@ -175,6 +195,11 @@ class Redisz:
             rdz.keys()          # 返回所有键名列表
             rdz.keys('test:*')  #  返回以test:开头的键名列表
         """
+        if self.cluster is True:
+            keys = []
+            for k in self.get_redis().scan_iter(match=pattern, count=1000):
+                keys.append(k)
+            return keys
         return self.get_redis().keys(pattern=pattern, **kwargs)
 
     def delete(self, names, *args):
@@ -386,7 +411,8 @@ class Redisz:
             rdz.str_get('test:name') # Zhang Tao
             rdz.str_get('test:not-exist') # None
         """
-        return self.get_redis().get(name)
+        result = self.get_redis().get(name)
+        return bytes_to_str(result)
 
     def str_mset(self, mapping):
         """
@@ -423,7 +449,9 @@ class Redisz:
             rdz.str_mget(['test:name', 'test:age'], 'test:email') # ['Zhang Tao', '18', 'taozh@cisco.com']
             rdz.str_mget('test:name', 'test:not-exist') # ['Zhang Tao', None]
         """
-        return self.get_redis().mget(names, *args)
+        # result = self.get_redis().mget(names, *args)
+        # [bytes_to_str(item) for item in self.get_redis().mget(names, *args)]
+        return [bytes_to_str(item) for item in self.get_redis().mget(names, *args)]
 
     def str_append(self, name, value):
         """
@@ -464,7 +492,8 @@ class Redisz:
             rdz.str_getset('test:age', 19) # 返回18, test:age -> 19
             rdz.str_getset('test:not-exist', 'new value') # 返回None, test:not-exist -> new value
         """
-        return self.get_redis().getset(name, value)
+        result = self.get_redis().getset(name, value)
+        return bytes_to_str(result)
 
     def str_setrange(self, name, offset, value):
         """
@@ -512,7 +541,8 @@ class Redisz:
             # test:study=好好学习
             rdz.str_getrange('test:study', 0, 2) # 好, 索引0-2的3个字节, 一个汉字3个字节
         """
-        return self.get_redis().getrange(name, start, end)
+        result = self.get_redis().getrange(name, start, end)
+        return bytes_to_str(result)
 
     def str_len(self, name):
         """
@@ -702,22 +732,26 @@ class Redisz:
             left:bool -默认从右侧移除元素, 如果left=True, 则从左侧移除元素
     
         返回:
-            item:string|list - 移除的元素或元素组成的列表
+            item:list - 移除的元素或元素组成的列表
     
         示例:
             # test:numbers = ['1', '2', '3', '4', '5', '6']
-            rdz.list_pop('test:numbers', 0)     # 返回None
+            rdz.list_pop('test:numbers', 0)     # 返回[]
             rdz.list_pop('test:numbers')        # 移除最右侧的元素, 返回结果为6, test:numbers -> ['1', '2', '3', '4', '5'])
             rdz.list_pop('test:numbers',2)      # 移除最右侧的2个元素, 返回结果为['5', '4'], test:numbers -> ['1', '2', '3']
             rdz.list_pop('test:numbers',left=True)  # 返回结果为1, test:numbers -> ['2', '3']
             rdz.list_pop('test:numbers',3)      # 返回结果为['3', '2'], test:numbers -> []
-            rdz.list_pop('test:not-exist')      # 返回None
+            rdz.list_pop('test:not-exist')      # 返回[]
         """
         r = self.get_redis()
+
         if left is True:
-            return r.lpop(name, count=count)
+            result = r.lpop(name, count=count)
         else:
-            return r.rpop(name, count=count)
+            result = r.rpop(name, count=count)
+        if result is None:
+            return []
+        return result
 
     def list_rem(self, name, value, count=1):
         """
@@ -2441,4 +2475,4 @@ class Redisz:
             subscribe(self, channels, callback)
 
 
-__version__ = '0.3.1'
+__version__ = '0.5'
