@@ -90,9 +90,10 @@ class TestHash(RedisTestCase):
         self.assertEqual(rdz.hash_decr('test:taozh', 'not-exist'), -1)
         self.assertEqual(rdz.hash_get('test:taozh', 'not-exist'), '-1')
 
-        with self.assertRaises(ResponseError):
+        with self.assertRaises(ResponseError):  # Cluster模式下，不能try...except异常，redis.exceptions.ResponseError: hash value is not an integer
             rdz.hash_decr('test:taozh', 'email')
-        with self.assertRaises(ResponseError):
+
+        with self.assertRaises(ResponseError):  # Cluster模式下，不能try...except异常，redis.exceptions.ResponseError: hash value is not an integer
             rdz.hash_decr('test:taozh', 'score')
 
     def test_incrfloat(self):

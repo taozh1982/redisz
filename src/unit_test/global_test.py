@@ -89,7 +89,7 @@ class TestStr(RedisTestCase):
         self.assertEqual(rdz.ttl('test:i2'), -1)
 
         current_time = int(time.time())
-        self.assertTrue(rdz.expireat('test:i3', current_time + 2))
+        self.assertTrue(rdz.expireat('test:i3', current_time + 2))  # 确保运行test的客户端跟redis所在server时间一致
 
         self.assertFalse(rdz.expireat('test:not-exist', current_time + 2))
         self.assertLessEqual(rdz.ttl('test:i3'), 2)
@@ -104,30 +104,33 @@ class TestStr(RedisTestCase):
 
     def test_sort(self):
         rdz = self.rdz
-        if rdz.cluster is True:
-            print('\n', __name__ + ":test_sort doesn't work with clusters")
-            return
-        rdz.set_value('test:sort', [6, 88, 112, 18, 36])
-        rdz.set_value('test:sort-weight', {'d-6': 1, 'd-88': 2, 'd-112': 3, 'd-18': 4, 'd-36': 5, })
-        self.assertListEqual(rdz.sort('test:sort'), ['6', '18', '36', '88', '112'])
-        self.assertListEqual(rdz.sort('test:sort', desc=True), ['112', '88', '36', '18', '6'])
-        self.assertListEqual(rdz.sort('test:sort', alpha=True), ['112', '18', '36', '6', '88'])
-        self.assertListEqual(rdz.sort('test:sort', start=1, num=3), ['18', '36', '88'])
+        # if rdz.get_ha_mode() == 'cluster':
+        #     print('\n', __name__ + ":test_sort doesn't work with clusters")
+        #     return
+        rdz.set_value('test:{abc}:sort', [6, 88, 112, 18, 36])
+        rdz.set_value('test:{abc}:sort-weight', {'d-6': 1, 'd-88': 2, 'd-112': 3, 'd-18': 4, 'd-36': 5, })
+        self.assertListEqual(rdz.sort('test:{abc}:sort'), ['6', '18', '36', '88', '112'])
+        self.assertListEqual(rdz.sort('test:{abc}:sort', desc=True), ['112', '88', '36', '18', '6'])
+        self.assertListEqual(rdz.sort('test:{abc}:sort', alpha=True), ['112', '18', '36', '6', '88'])
+        self.assertListEqual(rdz.sort('test:{abc}:sort', start=1, num=3), ['18', '36', '88'])
 
-        rdz.set_value('test:sort-alpha', ['a', 'c', 'b'])
-        self.assertListEqual(rdz.sort('test:sort-alpha', alpha=True), ['a', 'b', 'c'])
+        rdz.set_value('test:{abc}:sort-alpha', ['a', 'c', 'b'])
+        self.assertListEqual(rdz.sort('test:{abc}:sort-alpha', alpha=True), ['a', 'b', 'c'])
         with self.assertRaises(ResponseError):
-            rdz.sort('test:sort-alpha')
+            rdz.sort('test:{abc}:sort-alpha')
+        #
+        self.assertEqual(rdz.sort('test:{abc}:sort', store='test:{abc}:sort-store'), 5)
+        self.assertListEqual(rdz.get_value('test:{abc}:sort-store'), ['6', '18', '36', '88', '112'])
 
-        self.assertEqual(rdz.sort('test:sort', store='test:sort-store'), 5)
-        self.assertListEqual(rdz.get_value('test:sort-store'), ['6', '18', '36', '88', '112'])
+        rdz.set_value('test:{abc}:obj-ids', [1, 3, 2])
+        rdz.set_value('test:{abc}:obj-1', {'name': '1a', 'weight': 33})
+        rdz.set_value('test:{abc}:obj-2', {'name': '2b', 'weight': 22})
+        rdz.set_value('test:{abc}:obj-3', {'name': '3c', 'weight': 11})
 
-        rdz.set_value('test:obj-ids', [1, 3, 2])
-        rdz.set_value('test:obj-1', {'name': '1a', 'weight': 33})
-        rdz.set_value('test:obj-2', {'name': '2b', 'weight': 22})
-        rdz.set_value('test:obj-3', {'name': '3c', 'weight': 11})
-
-        self.assertListEqual(rdz.sort('test:obj-ids', by='test:obj-*->weight'), ['3', '2', '1'])
-        self.assertListEqual(rdz.sort('test:obj-ids', by='test:obj-*->weight', get='test:obj-*->name'), ['3c', '2b', '1a'])
-        self.assertListEqual(rdz.sort('test:obj-ids', get='test:obj-*->name'), ['1a', '2b', '3c'])
-        self.assertListEqual(rdz.sort('test:obj-ids', by='nosort', get='test:obj-*->name'), ['1a', '3c', '2b'])
+        if rdz.get_ha_mode() == 'cluster':
+            print('\n', __name__ + ":test_sort - BY option of SORT denied in Cluster mode")
+            return
+        self.assertListEqual(rdz.sort('test:{abc}:obj-ids', by='test:{abc}:obj-*->weight'), ['3', '2', '1'])
+        self.assertListEqual(rdz.sort('test:{abc}:obj-ids', by='test:{abc}:obj-*->weight', get='test:{abc}:obj-*->name'), ['3c', '2b', '1a'])
+        self.assertListEqual(rdz.sort('test:{abc}:obj-ids', get='test:{abc}:obj-*->name'), ['1a', '2b', '3c'])
+        self.assertListEqual(rdz.sort('test:{abc}:obj-ids', by='nosort', get='test:{abc}:obj-*->name'), ['1a', '3c', '2b'])

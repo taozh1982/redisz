@@ -51,3 +51,20 @@ def create_cluster_nodes(startup_nodes):
             if node.get('host') is not None:
                 nodes.append(ClusterNode(node.get('host'), node.get('port')))
     return nodes
+
+
+def create_sentinel_nodes(sentinels):
+    nodes = []
+    for item in sentinels:
+        item_type = type(item)
+        if item_type is tuple:
+            nodes.append(item)
+        else:
+            node = {'host': None, 'port': 26379}
+            if item_type is str:
+                node['host'] = item
+            elif item_type is dict:
+                node.update(item)
+            if node.get('host') is not None:
+                nodes.append((node.get('host'), node.get('port')))
+    return nodes

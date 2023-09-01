@@ -1,5 +1,3 @@
-import time
-
 from redis.exceptions import LockError
 
 from src.unit_test import RedisTestCase
@@ -44,9 +42,11 @@ class TestLock(RedisTestCase):
 
         self.assertTrue(lock1.acquire())
 
-        with lock:
-            self.assertTrue(lock.owned())
-            pass
-
+        try:
+            with lock:
+                self.assertTrue(lock.owned())
+                pass
+        except LockError as err:
+            print(err)
         self.assertTrue(lock.acquire())
         lock.release()

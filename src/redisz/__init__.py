@@ -8,7 +8,7 @@ from contextlib import contextmanager
 import redis
 from redis.lock import Lock
 
-from .utils import gen_lock_name, subscribe, get_list_args, bytes_to_str, create_cluster_nodes
+from .utils import gen_lock_name, subscribe, get_list_args, bytes_to_str, create_cluster_nodes, create_sentinel_nodes
 
 
 class Redisz:
@@ -26,35 +26,63 @@ class Redisz:
                         -unix://[[username]:[password]]@/path/to/socket.sock?db=0
 
         示例:
+            # 单节点
             rdz = redisz.Redisz('redis://127.0.0.1', decode_responses=True)
             rdz = redisz.Redisz('redis://127.0.0.1:6379')
-            rdz = redisz.Redisz('redis://127.0.0.1:6379/0')
-            rdz = redisz.Redisz(cluster=True, startup_nodes=[{'host': '10.124.5.222', 'port': 6379},
-                                                              {'host': '10.124.5.190', 'port': 6379},
-                                                              {'host': '10.124.5.191', 'port': 6379}])
+            rdz = redisz.Redisz('redis://127.0.0.1:6379/10')
+
+            # 集群
+            rdz = redisz.Redisz(cluster=True,
+                            startup_nodes=[{'host': '10.20.30.40', 'port': 6379}, {'host': '10.20.30.40', 'port': 6379}, {'host': '10.20.30.40', 'port': 6379}])
+
+            # 哨兵
+            rdz = redisz.Redisz(sentinel=True,
+                                sentinels=[{'host': '10.20.30.40', 'port': 26379}, {'host': '10.20.30.50', 'port': 26379}],
+                                socket_connect_timeout=1)
         """
-        cluster = self.cluster = kwargs.get('cluster') is True
+
         if 'decode_responses' not in kwargs:
             kwargs['decode_responses'] = True
-        if cluster and 'startup_nodes' in kwargs:
-            kwargs['startup_nodes'] = create_cluster_nodes(kwargs.get('startup_nodes'))
-
         if url and not url.lower().startswith(('redis://', 'rediss://', 'unix://')):
             url = 'redis://' + url
 
-        if cluster:
+        ha_mode = None
+        if kwargs.get('sentinel') is True:
+            ha_mode = 'sentinel'
+        elif kwargs.get('cluster') is True:
+            ha_mode = 'cluster'
+        self._ha_mode = ha_mode
+
+        if ha_mode == 'sentinel':  # @2023-08-29: add
+            kwargs.pop('sentinel', None)
+            self.sentinel_service_name = kwargs.pop('sentinel_service_name', 'mymaster')
+            sentinels = create_sentinel_nodes(kwargs.pop('sentinels', []))
+            self.redis_sentinel = redis.Sentinel(sentinels=sentinels, **kwargs)
+        elif ha_mode == 'cluster':
+            kwargs['startup_nodes'] = create_cluster_nodes(kwargs.get('startup_nodes', []))
             self.redis_ins = redis.RedisCluster(url=url, **kwargs)
         else:
             self.redis_ins = redis.Redis(connection_pool=redis.ConnectionPool.from_url(url, **kwargs))
 
-        # startup_nodes = [{'name': 'node1', 'host': '10.124.5.222', 'port': 6379},
-        #                  {'name': 'node2', 'host': '10.124.5.190', 'port': 6379},
-        #                  {'name': 'node3', 'host': '10.124.5.191', 'port': 6379}]
-        # self.redis_ins = redis.RedisCluster(startup_nodes=startup_nodes, decode_responses=True)
-        # self.redis_ins = redis.RedisCluster(startup_nodes=[
-        #     ClusterNode('10.124.5.222', 6379),
-        #     ClusterNode('10.124.5.191', 6379),
-        #     ClusterNode('10.124.5.190', 6379)])
+    def get_ha_mode(self):
+        """
+        描述:
+            返回HA部署模式.
+
+        版本:
+            0.6 -添加
+
+        返回:
+            ha_type:str - HA类型, 哨兵模式:'sentinel', 集群模式:'cluster'
+
+        示例:
+            rdz = redisz.Redisz(sentinel=True, sentinels=[{'host': '10.20.30.40', 'port': 26379}, {'host': '10.20.30.50', 'port': 26379}])
+            rdz.get_ha_mode()   # 'sentinel'
+            rdz = redisz.Redisz(cluster=True, startup_nodes=[{'name': 'node1', 'host': '10.20.30.40', 'port': 6379}, {'name': 'node2', 'host': '10.20.30.50', 'port': 6379}]
+            rdz.get_ha_mode()   # 'cluster'
+        :return:
+        """
+        return self._ha_mode
 
     def get_redis(self):
         """
@@ -65,10 +93,23 @@ class Redisz:
             redis - redis.Redis对象
 
         示例:
-            rds = rdz.get_redis()
+            rdz = rdz.get_redis()
             rdz.set('test:name', 'Zhang Tao')
         """
+        if self.get_ha_mode() == 'sentinel':  # @2023-08-29: add
+            return self.redis_sentinel.master_for(self.sentinel_service_name)
         return self.redis_ins
+
+    def close(self):
+        """
+        描述:
+            关闭redis连接.
+
+        示例:
+            rdz.close()
+        """
+        if self.redis_ins:
+            self.redis_ins.close()
 
     def get_redis_pipeline(self, transaction=True):
         """
@@ -195,7 +236,7 @@ class Redisz:
             rdz.keys()          # 返回所有键名列表
             rdz.keys('test:*')  #  返回以test:开头的键名列表
         """
-        if self.cluster is True:
+        if self.get_ha_mode() == 'cluster':
             keys = []
             for k in self.get_redis().scan_iter(match=pattern, count=1000):
                 keys.append(k)
@@ -576,7 +617,7 @@ class Redisz:
             name:string -redis的键名
             amount:int -增加的数值
 
-        返回
+        返回:
             value:int -自增以后的值
 
         示例:
@@ -603,7 +644,7 @@ class Redisz:
             name:string -redis的键名
             amount:int -减去的数值
 
-        返回
+        返回:
             value:int -自减以后的值
 
         示例:
@@ -2305,15 +2346,18 @@ class Redisz:
                    -可以通过lock.acquire/lock.release方法获取锁, 释放锁
 
         示例:
-            # 配合with使用
-            with r.lock('my_lock'):
-                r.set('foo', 'bar')
+            # 1.配合with使用
+            try:
+                with rdz.lock('my_lock'):
+                    rdz.set_value('foo', 'bar')
+            except LockError as err:
+                print(err)
 
-            # 通过acquire/release方法获取锁/释放锁
+            # 2.通过acquire/release方法获取锁/释放锁
             lock = rdz.lock('my_lock')
-            lock.acquire(blocking=True)
-            rdz.set('foo', 'bar')
-            lock.release()
+            if lock.acquire(blocking=True):
+                rdz.set_value('foo', 'bar')
+                lock.release()
         """
 
         return Lock(self.get_redis(), name=name, timeout=timeout, sleep=sleep, blocking=blocking, blocking_timeout=blocking_timeout, thread_local=thread_local)
@@ -2475,4 +2519,4 @@ class Redisz:
             subscribe(self, channels, callback)
 
 
-__version__ = '0.5'
+__version__ = '0.6'
