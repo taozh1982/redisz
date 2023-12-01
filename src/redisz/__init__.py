@@ -8,63 +8,65 @@ from contextlib import contextmanager
 import redis
 from redis.lock import Lock
 
-from .utils import gen_lock_name, subscribe, get_list_args, bytes_to_str, create_cluster_nodes, create_sentinel_nodes
+from .utils import gen_lock_name, subscribe, get_list_args, bytes_to_str, create_cluster_nodes, create_sentinel_nodes, parse_url, _create_redis
 
 
 class Redisz:
     # ------------------------------------------ sys ------------------------------------------
-    def __init__(self, url=None, **kwargs):
+    def __init__(self, url, **kwargs):
         """
         描述:
-            初始化redis, url可以指定redis的账号,密码,地址,端口,数据库等信息, 也可以通过关键字参数指定其他连接属性.
-            如果设置cluster=True，则初始化Cluster Redis对象，通过startup_nodes参数指定集群节点列表.
+            生成Redisz对象, 支持Redis单节点/集群/哨兵和asyncio模式
 
         参数:
             url:str -redis地址url,格式如下
-                        -redis://[[username]:[password]]@localhost:6379/0
-                        -rediss://[[username]:[password]]@localhost:6379/0
+                        -redis://[[username]:[password]]@address:port/index
+                        -rediss://[[username]:[password]]@address:port/index
                         -unix://[[username]:[password]]@/path/to/socket.sock?db=0
+                        -sentinel://address:port;address:port;address:port;
+                        -cluster://address:port;address:port;address:port;
 
         示例:
             # 单节点
-            rdz = redisz.Redisz('redis://127.0.0.1', decode_responses=True)
-            rdz = redisz.Redisz('redis://127.0.0.1:6379')
-            rdz = redisz.Redisz('redis://127.0.0.1:6379/10')
+            rdz = redisz.Redisz('redis://1.1.1.1') # 默认端口为6379
+            rdz = redisz.Redisz('redis://1.1.1.1:6379')
+            rdz = redisz.Redisz('redis://1.1.1.1:6379/10') # 指定database(默认为0)
 
             # 集群
-            rdz = redisz.Redisz(cluster=True,
-                            startup_nodes=[{'host': '10.20.30.40', 'port': 6379}, {'host': '10.20.30.40', 'port': 6379}, {'host': '10.20.30.40', 'port': 6379}])
+            rdz = redisz.Redisz('cluster://1.1.1.1:6379;2.2.2.2:6379;3.3.3.3') # 默认端口为6379
 
             # 哨兵
-            rdz = redisz.Redisz(sentinel=True,
-                                sentinels=[{'host': '10.20.30.40', 'port': 26379}, {'host': '10.20.30.50', 'port': 26379}],
-                                socket_connect_timeout=1)
+            rdz = redisz.Redisz('sentinel://1.1.1.1:26379;2.2.2.2:26379;3.3.3.3') # 默认端口为26379
+            rdz = redisz.Redisz('sentinel://1.1.1.1:26379;2.2.2.2:26379;3.3.3.3',
+                                    database_index=10, sentinel_service_name='yourmaster')  # 指定database(默认为0)和哨兵mastername(默认为'mymaster')
+
+            # asyncio
+            ws_redis = redisz.Redisz('sentinel://1.1.1.1:26379;2.2.2.2:26379;3.3.3.3', asyncio=True)
         """
 
-        if 'decode_responses' not in kwargs:
-            kwargs['decode_responses'] = True
-        if url and not url.lower().startswith(('redis://', 'rediss://', 'unix://')):
-            url = 'redis://' + url
+        default_kwargs = {
+            'decode_responses': True,
+            'socket_connect_timeout': 2,
+            'socket_timeout': 1
+        }
+        for k in default_kwargs:
+            kwargs.setdefault(k, default_kwargs[k])
 
-        ha_mode = None
-        if kwargs.get('sentinel') is True:
-            ha_mode = 'sentinel'
-        elif kwargs.get('cluster') is True:
-            ha_mode = 'cluster'
-        self._ha_mode = ha_mode
+        self.sentinel_service_name = kwargs.pop('sentinel_service_name', 'mymaster')  # 哨兵模式service_name
+        self.database_index = kwargs.pop('database_index', 0)  # @2023-11-01 添加 哨兵模式database index
+        self.asyncio = kwargs.pop('asyncio', False)  # @2023-11-01 添加 异步模式
 
-        if ha_mode == 'sentinel':  # @2023-08-29: add
-            kwargs.pop('sentinel', None)
-            self.sentinel_service_name = kwargs.pop('sentinel_service_name', 'mymaster')
-            sentinels = create_sentinel_nodes(kwargs.pop('sentinels', []))
-            self.redis_sentinel = redis.Sentinel(sentinels=sentinels, **kwargs)
-        elif ha_mode == 'cluster':
-            kwargs['startup_nodes'] = create_cluster_nodes(kwargs.get('startup_nodes', []))
-            self.redis_ins = redis.RedisCluster(url=url, **kwargs)
-        else:
-            self.redis_ins = redis.Redis(connection_pool=redis.ConnectionPool.from_url(url, **kwargs))
+        url_params = parse_url(url)
+        self.mode = url_params.get('mode')
+        kwargs['_nodes'] = url_params.get('nodes')
+        kwargs['_url'] = url_params.get('url')
+        self._redis_ins = _create_redis(self.mode, self.asyncio, **kwargs)
+        self._sentinel_master_ins = None
 
     def get_ha_mode(self):
+        return self.get_mode()
+
+    def get_mode(self):
         """
         描述:
             返回HA部署模式.
@@ -77,12 +79,12 @@ class Redisz:
 
         示例:
             rdz = redisz.Redisz(sentinel=True, sentinels=[{'host': '10.20.30.40', 'port': 26379}, {'host': '10.20.30.50', 'port': 26379}])
-            rdz.get_ha_mode()   # 'sentinel'
+            rdz.get_mode()   # 'sentinel'
             rdz = redisz.Redisz(cluster=True, startup_nodes=[{'name': 'node1', 'host': '10.20.30.40', 'port': 6379}, {'name': 'node2', 'host': '10.20.30.50', 'port': 6379}]
-            rdz.get_ha_mode()   # 'cluster'
+            rdz.get_mode()   # 'cluster'
         :return:
         """
-        return self._ha_mode
+        return self.mode
 
     def get_redis(self):
         """
@@ -96,9 +98,20 @@ class Redisz:
             rdz = rdz.get_redis()
             rdz.set('test:name', 'Zhang Tao')
         """
-        if self.get_ha_mode() == 'sentinel':  # @2023-08-29: add
-            return self.redis_sentinel.master_for(self.sentinel_service_name)
-        return self.redis_ins
+        if self.mode == 'sentinel':  # @2023-08-29: add
+            if self._sentinel_master_ins:  # @2023-11-28: 添加缓存以提高效率，可以节约60%+的时间
+                try:
+                    role = self._sentinel_master_ins.role()[0]
+                    if role == 'master':
+                        return self._sentinel_master_ins
+                except Exception:
+                    pass
+            self._sentinel_master_ins = self._redis_ins.master_for(self.sentinel_service_name)
+            if self.database_index != 0:  # 设置database index
+                self._sentinel_master_ins.select(self.database_index)
+            return self._sentinel_master_ins
+
+        return self._redis_ins
 
     def close(self):
         """
@@ -108,8 +121,8 @@ class Redisz:
         示例:
             rdz.close()
         """
-        if self.redis_ins:
-            self.redis_ins.close()
+        if self._redis_ins:
+            self._redis_ins.close()
 
     def get_redis_pipeline(self, transaction=True):
         """
@@ -236,7 +249,7 @@ class Redisz:
             rdz.keys()          # 返回所有键名列表
             rdz.keys('test:*')  #  返回以test:开头的键名列表
         """
-        if self.get_ha_mode() == 'cluster':
+        if self.get_mode() == 'cluster':
             keys = []
             for k in self.get_redis().scan_iter(match=pattern, count=1000):
                 keys.append(k)
@@ -678,22 +691,22 @@ class Redisz:
             向指定列表中增加一个或多个值, 默认情况, 如果列表不存在则新建并赋值
             默认添加到列表的右边, 如果left参数为True, 则添加到列表的左边
             如果xx为True, 则只有指定列表存在时才会添加, 并且一次只能加一个值
-    
+
         参数:
             name:string -redis的键名
             values:list -要添加的元素列表
             *args -也可以通过位置参数的方式添加多个元素
             left:bool -设置left=True, 会将元素添加到列表的左侧, 请注意添加的多个值在列表中的顺序跟传递参数的顺序【相反】(请参考示例)
             xx:bool -设置xx为True, 只会将【一个】元素添加到已有列表, 如果列表不存在, 则不会创建
-    
+
         返回:
             length:int - 整个列表的长度, 如果xx=True, 但是列表不存在则返回0
-    
+
         示例:
             rdz.list_push('test:numbers', 3, 4)     # 2, test:numbers -> ['3', '4']
             rdz.list_push('test:numbers', [2, 1], left=True)    # 4, test:numbers -> ['1', '2', '3', '4'], 请注意1和2的顺序
             rdz.list_push('test:numbers', [5, 6], 7)    # 7, test:numbers -> ['1', '2', '3', '4', '5', '6', '7']
-    
+
             rdz.list_push('test:not-exist', 1, xx=True)     # 0, test:not-exist不存在, 因为xx为True, 所以不会新建list
         """
         values = get_list_args(values, args)
@@ -712,19 +725,19 @@ class Redisz:
         描述:
             在指定列表的指定参考值前或后插入一个新值, where参数指定插入的位置(before/after), 默认插入到指定值的后边
             如果指定列表不存在, 则不做处理
-    
+
         参数:
             name:string -redis的键名
             ref_value:sting|int|float -参考值, 如果为None, 则会引发异常
             *args -也可以通过位置参数的方式添加多个元素
             left:bool -设置left=True, 会将元素添加到列表的左侧, 请注意添加的多个值在列表中的顺序跟传递参数的顺序【相反】(请参考示例)
-    
+
         返回:
             length:int
                 -如果插入成功, 返回整个列表的长度
                 -如果列表不存在, 返回0
                 -如果ref_value在列表中不存在, 返回-1
-    
+
         示例:
             # test:numbers = ['1', '3', '5']
             rdz.list_insert('test:numbers', 1, 2)       # 把2插入到1后边, test:numbers -> ['1', '2', '3', '5']
@@ -742,15 +755,15 @@ class Redisz:
         描述:
             对指定列表中的指定索引位置重新赋值
             如果列表不存在/index超出范围/value不是字符串, 都会引发异常
-    
+
         参数:
             name:string -redis的键名
             index:int -重新赋值的索引, 支持负数(-1表示最后一个元素索引), 必须是列表范围内的索引, 否则会引发异常
             value:string|int|float -新值, 除string|int|float以外的类型, 都会引发异常
-    
+
         返回:
             result:bool -如果赋值成功返回True
-    
+
         示例:
             # test:numbers = ['1', 'b', 'c']
             rdz.list_set('test:numbers', 1, 2)  # 把第一个元素('b')替换成2, test:numbers -> ['1', '2', 'c']
@@ -766,15 +779,15 @@ class Redisz:
             -如果列表没有值, 无论count是几个, 返回None
             -如果count=0, 返回None
             -如果count>1时, 如果列表个数小于count, 返回由移除元素组成的列表, 即便只移除了一个元素, 返回的也是列表
-    
+
         参数:
             name:string -redis的键名
             count:int -要移除的个数
             left:bool -默认从右侧移除元素, 如果left=True, 则从左侧移除元素
-    
+
         返回:
             item:list - 移除的元素或元素组成的列表
-    
+
         示例:
             # test:numbers = ['1', '2', '3', '4', '5', '6']
             rdz.list_pop('test:numbers', 0)     # 返回[]
@@ -802,21 +815,21 @@ class Redisz:
             count > 0: 从左向右删除指定个数的等于value的值
             count < 0: 从右向左删除指定个数的等于value的值
             count = 0: 删除所有等于value的元素
-    
+
         参数:
             name:string -redis的键名
             value:string|int|float -要删除的值
             count:int - 删除的个数和删除方向
-    
+
         返回:
             count:int -删除的个数, 如果列表不存在或value在列表中不存在, 返回0
-    
+
         示例:
             # test:numbers = ['1', '2', '3', '4', '5', '6', '5', '4', '3', '2', '1']
             rdz.list_rem('test:numbers', 1)         # 1, 从左向右删除第一个1 -> ['2', '3', '4', '5', '6', '5', '4', '3', '2', '1']
             rdz.list_rem('test:numbers', 2, -1)     # 1, 从后向前删除第一个2 -> ['2', '3', '4', '5', '6', '5', '4', '3', '1']
             rdz.list_rem('test:numbers', 4, 0)      # 2, 删除所有的 -> ['2', '3', '5', '6', '5', '3', '1']
-    
+
             rdz.list_rem('test:numbers', 10)        # 值在列表中不存在, 返回0
             rdz.list_rem('test:not-exist', 10)      # 列表不存在, 返回0
         """
@@ -827,15 +840,15 @@ class Redisz:
         描述:
             在指定列表中移除【没有】在start-end索引之间的值, start和end索引处的值不会被移除
             只保留start<=索引<=end的值, 如果start>end或者start<0, list所有的值都会被移除
-    
+
         参数:
             name:string -redis的键名
             start:int -开始索引, start索引处的值不会被移除
             end:int -结束索引, end索引处的值不会被移除
-    
+
         返回:
             result:bool -True
-    
+
         示例:
             # test:numbers = ['1', '2', '3', '4', '5', '6']
             rdz.list_trim('test:numbers', 1, 3)     # 把索引在1-3以外的值移除, test:numbers -> ['2', '3', '4']
@@ -849,14 +862,14 @@ class Redisz:
         描述:
             在指定列表中根据索引获取列表元素
             如果列表不存在/index超出了列表范围, 返回None
-    
+
         参数:
             name:string -redis的键名
             index:int -索引, 支持负数, 最后一个元素的索引是-1
-    
+
         返回:
             result:string -索引处的元素, 如果列表不存在/index超出了列表范围, 返回None
-    
+
         示例:
             # test:numbers = ['1', '2', '3', '4', '5', '6']
             rdz.list_index('test:numbers', 1)       # 索引为1的值为:'2'
@@ -871,13 +884,13 @@ class Redisz:
         描述:
             获取指定列表的长度
             如果列表不存在, 返回0
-    
+
         参数:
             name:string -redis的键名
-    
+
         返回:
             length:init -列表的长度, 如果列表不存在, 返回0
-    
+
         示例:
             # test:numbers = ['1', '2', '3', '4', '5', '6']
             list_len('test:numbers') # 6
@@ -893,15 +906,15 @@ class Redisz:
             返回list中包含start和end索引处的数据项
             如果start或end超出了列表的索引范围, 只会返回列表索引范围内的数据列表
             如果要返回所有数据项, 可以通过start=0 & end=-1进行获取
-    
+
         参数:
             name:string -redis的键名
             start:int -开始索引
             end:int -结束索引
-    
+
         返回:
             result:list -列表在start和end范围内数据组成的列表
-    
+
         示例:
             # test:numbers = ['1', '2', '3', '4', '5', '6']
             rdz.list_range('test:numbers', 0, 2)        # 包含第0个和第2个数据, ['1', '2', '3']
@@ -915,10 +928,10 @@ class Redisz:
         """
         描述:
             利用yield封装创建生成器, 对指定列表元素进行增量迭代, 数据量较大时比较有用, 避免将数据全部取出把内存撑爆
-    
+
         参数:
         name:string -redis的键名
-    
+
         示例:
             for item in rdz.list_iter('test:numbers'):  # 遍历列表
                 print(item)
@@ -936,25 +949,25 @@ class Redisz:
             如果指定了多个列表, 则【依次】移除, 先移除第一个列表中的元素, 如果第一个列表的元素都被移除了, 再移除第二个列表中的元素, 依次类推
             默认按照从右向左的方向进行移除, 可以通过left参数指定从左向右的方向进行移除
             如果指定的列表不存在或都为空, 则会【阻塞】指定的时间(秒)直到数据存入, 如果time=0表示一直阻塞直到数据出现
-    
+
         参数:
             name:string -redis的键名
             timeout:int -列表为空时, 阻塞的的时间, 单位是秒, 如果time=0表示一直阻塞直到任一列表中出现数据, 必须是>=0的整数, 否则time不起作用
             left:bool -left=True, 从左向右逐个移除元素
-    
+
         返回:
             result:tuple -包含name和移除数据的元组, 如果阻塞指定时间以后没有数据, 返回None
-    
+
         示例:
             # test:numbers1 = [1, 2], test:numbers2 = [3, 4],
-    
+
             # 从右向左依次移除
             rdz.list_bpop(['test:numbers1', 'test:numbers2'])   # ('test:numbers1', '2')
             rdz.list_bpop(['test:numbers1', 'test:numbers2'])   # ('test:numbers1', '1')
             rdz.list_bpop(['test:numbers1', 'test:numbers2'])   # ('test:numbers2', '4')
             rdz.list_bpop(['test:numbers1', 'test:numbers2'])   # ('test:numbers2', '3')
             rdz.list_bpop(['test:numbers1', 'test:numbers2'], 2)    # 阻塞等待两秒, 如果数据没有出现, 则向下运行
-    
+
             #从左向右依次移除
             rdz.list_bpop(['test:numbers1', 'test:numbers2'], left=True)    # ('test:numbers1', '1')
             rdz.list_bpop(['test:numbers1', 'test:numbers2'], left=True)    # ('test:numbers1', '2')
@@ -973,15 +986,15 @@ class Redisz:
         描述:
             从一个列表的右侧移除一个元素并将其添加到另一个列表的左侧, 并将值返回
             如果对应的列表中值不存在, 则会阻塞指定的时间(秒)直到数据存入, 如果time=0表示一直阻塞直到数据出现
-    
+
         参数:
             src:string -源列表的键名
             dst:string -目的列表的键名
-            timeout:int -源列表为空时, 阻塞的的时间, 单位是秒, None表示不阻塞, 0表示一直阻塞直到任一列表中出现数据, 
-    
+            timeout:int -源列表为空时, 阻塞的的时间, 单位是秒, None表示不阻塞, 0表示一直阻塞直到任一列表中出现数据,
+
         返回:
             item:string - 移动的值, 如果阻塞指定时间以后没有数据, 返回None
-    
+
         示例:
             #test:numbers1 = [1, 2], test:numbers2 = [3, 4],
             rdz.list_rpoplpush('test:numbers1','test:numbers2')     # 返回2, test:numbers1 = ['1'], test:numbers2 = ['2', '3', '4']
@@ -1561,7 +1574,7 @@ class Redisz:
         返回:
             result:set -交集集合, 如果设置dst, 返回交集中的元素【数量】
 
-        示例: 
+        示例:
             # test:letters1={'a', 'b', 'c'}, test:letters2={'b', 'c', 'd'}, test:letters3={'c', 'd', 'e'}
             rdz.set_inter(['test:letters1', 'test:letters2'])   # {'b', 'c'}
             rdz.set_inter(['test:letters2', 'test:letters3'])   # {'c', 'd'}
@@ -1591,7 +1604,7 @@ class Redisz:
         返回:
             result:set -并集集合, 如果设置dst, 返回并集中的元素数量
 
-        示例: 
+        示例:
             #test:letters1={'a', 'b', 'c'}, test:letters2={'b', 'c', 'd'}, test:letters3={'c', 'd', 'e'}
             rdz.set_union('test:letters1', 'test:letters2')   # {'a', 'b', 'c', 'd'}
             rdz.set_union(['test:letters2', 'test:letters3'])   # {'b', 'c', 'd', 'e'}
@@ -2350,14 +2363,14 @@ class Redisz:
             try:
                 with rdz.lock('my_lock'):
                     rdz.set_value('foo', 'bar')
-            except LockError as err:
+            except LockError as err: # 如果获取lock失败，会有异常
                 print(err)
 
             # 2.通过acquire/release方法获取锁/释放锁
             lock = rdz.lock('my_lock')
-            if lock.acquire(blocking=True):
+            if lock.acquire(blocking=True): # 等待blocking_timeout时间，直到获取锁
                 rdz.set_value('foo', 'bar')
-                lock.release()
+                lock.release()  # 释放锁
         """
 
         return Lock(self.get_redis(), name=name, timeout=timeout, sleep=sleep, blocking=blocking, blocking_timeout=blocking_timeout, thread_local=thread_local)
@@ -2467,7 +2480,7 @@ class Redisz:
             pubsub = rdz.get_pubsub()
             pubsub.subscribe('ws:channel')
         """
-        return self.redis_ins.pubsub()
+        return self.get_redis().pubsub()
 
     def publish(self, channel, message, **kwargs):
         """
@@ -2519,4 +2532,4 @@ class Redisz:
             subscribe(self, channels, callback)
 
 
-__version__ = '0.6'
+__version__ = '0.7'

@@ -19,13 +19,10 @@ class RedisTestCase(unittest.TestCase):
 
     def setUp(self):
         # self.rdz = redisz.Redisz('localhost')
-        # self.rdz = redisz.Redisz('10.124.206.62:7001')
-        # self.rdz = redisz.Redisz(sentinel=True,
-        #                          sentinels=[{'host': '10.124.206.161', 'port': 27001}, {'host': '10.124.206.162', 'port': 27001}, {'host': '10.124.206.163', 'port': 27001}],
-        #                          socket_connect_timeout=1)
-        self.rdz = redisz.Redisz(cluster=True, startup_nodes=[{'host': '10.124.206.61', 'port': 7002},
-                                                              {'host': '10.124.206.62', 'port': 7002},
-                                                              {'host': '10.124.206.63', 'port': 7002}])
+        self.rdz = redisz.Redisz('10.124.206.63:7001')
+        # self.rdz = redisz.Redisz('sentinel://10.124.206.61:27001;10.124.206.62:27001;10.124.206.63:27001', database_index=10, sentinel_service_name='mymaster')
+        # self.rdz = redisz.Redisz('cluster://10.124.206.61:7002;10.124.206.62:7002;10.124.206.63:7002')
+
         self.rdz.delete(self.rdz.get_names("*"))
         self.rdz.delete(self.rdz.get_names("redisz-lock:*"))
         # self.rdz.delete(['test:numbers2','test:count'])

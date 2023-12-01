@@ -88,15 +88,16 @@ class TestStr(RedisTestCase):
         self.assertFalse(rdz.persist('test:not-exist'))
         self.assertEqual(rdz.ttl('test:i2'), -1)
 
-        current_time = int(time.time())
-        self.assertTrue(rdz.expireat('test:i3', current_time + 2))  # 确保运行test的客户端跟redis所在server时间一致
+        server_ts = rdz.get_redis().time()[0]
 
-        self.assertFalse(rdz.expireat('test:not-exist', current_time + 2))
+        self.assertTrue(rdz.expireat('test:i3', server_ts + 2))
+
+        self.assertFalse(rdz.expireat('test:not-exist', server_ts + 2))
         self.assertLessEqual(rdz.ttl('test:i3'), 2)
         self.assertGreaterEqual(rdz.ttl('test:i3'), 1)
 
         self.assertTrue(rdz.exists('test:i3'))
-        self.assertTrue(rdz.expireat('test:i3', current_time - 10))
+        self.assertTrue(rdz.expireat('test:i3', server_ts - 10))
         self.assertFalse(rdz.exists('test:i3'))
 
         time.sleep(2)
@@ -104,7 +105,7 @@ class TestStr(RedisTestCase):
 
     def test_sort(self):
         rdz = self.rdz
-        # if rdz.get_ha_mode() == 'cluster':
+        # if rdz.get_mode() == 'cluster':
         #     print('\n', __name__ + ":test_sort doesn't work with clusters")
         #     return
         rdz.set_value('test:{abc}:sort', [6, 88, 112, 18, 36])
@@ -127,7 +128,7 @@ class TestStr(RedisTestCase):
         rdz.set_value('test:{abc}:obj-2', {'name': '2b', 'weight': 22})
         rdz.set_value('test:{abc}:obj-3', {'name': '3c', 'weight': 11})
 
-        if rdz.get_ha_mode() == 'cluster':
+        if rdz.get_mode() == 'cluster':
             print('\n', __name__ + ":test_sort - BY option of SORT denied in Cluster mode")
             return
         self.assertListEqual(rdz.sort('test:{abc}:obj-ids', by='test:{abc}:obj-*->weight'), ['3', '2', '1'])
